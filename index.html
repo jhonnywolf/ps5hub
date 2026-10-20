@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<title>PS5 Hub</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎮</text></svg>">
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#0b1020;--card:#151c33;--card2:#273252;--text:#e8ecf8;--muted:#9aa6c8;
+  --accent:#2563eb;--ok:#22c55e;--bad:#ef4444;--wait:#eab308;
+}
+@media (prefers-color-scheme:light){
+  :root:not([data-theme="dark"]){
+    color-scheme:light;
+    --bg:#f2f5fc;--card:#ffffff;--card2:#e2e8f7;--text:#121a33;--muted:#5b678a;
+  }
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:var(--bg);color:var(--text);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+  display:flex;flex-direction:column;
+}
+header{padding:16px 16px 8px}
+h1{margin:0 0 12px;font-size:22px}
+.row{display:flex;gap:8px}
+input{
+  flex:1;min-width:0;padding:12px 14px;border-radius:12px;border:1px solid var(--card2);
+  background:var(--card);color:var(--text);font-size:16px;
+}
+button,a.btn{
+  border:0;border-radius:12px;padding:12px 14px;font-size:15px;font-weight:600;
+  background:var(--accent);color:#fff;text-decoration:none;text-align:center;cursor:pointer;
+}
+button.sec,a.btn.sec{background:var(--card2);color:var(--text)}
+.cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:8px 16px}
+.card{
+  background:var(--card);border:2px solid transparent;border-radius:14px;
+  padding:12px;text-align:left;color:var(--text);cursor:pointer;
+}
+.card.active{border-color:var(--accent)}
+.card b{display:block;font-size:15px;margin-bottom:6px}
+.st{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--wait)}
+.dot.ok{background:var(--ok)}.dot.bad{background:var(--bad)}
+.bar{display:flex;gap:8px;padding:4px 16px 8px}
+.bar>*{flex:1}
+main{flex:1;min-height:320px;padding:0 16px 16px;display:flex;flex-direction:column}
+iframe{flex:1;width:100%;min-height:320px;border:1px solid var(--card2);border-radius:14px;background:#fff}
+.hint{font-size:13px;color:var(--muted);margin:8px 2px 0;line-height:1.4}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎮 PS5 Hub</h1>
+  <div class="row">
+    <input id="ip" inputmode="decimal" placeholder="IP do PS5 (opcional), ex.: 192.168.0.50" autocomplete="off">
+    <button id="save" class="sec">Salvar</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button id="scan" style="flex:1">Buscar PS5 na rede</button>
+  </div>
+  <p class="hint" id="scanmsg">A busca usa o PS5 App (ps5_app.py) rodando no Termux.</p>
+</header>
+
+<div class="cards" id="cards"></div>
+
+<div class="bar">
+  <button id="open">Abrir em nova aba</button>
+  <button id="refresh" class="sec">Atualizar status</button>
+</div>
+
+<main>
+  <iframe id="frame" title="Painel"></iframe>
+  <p class="hint">Se o painel não aparecer aqui dentro, use “Abrir em nova aba”. Os dois servidores precisam estar rodando no aparelho em que você abriu esta página.</p>
+</main>
+
+<script>
+// ============ CONFIGURE AQUI ============
+// {ip} é trocado pelo IP do PS5 digitado acima.
+const HOSTS = [
+  { name: "Prospero Manager", url: "http://localhost:7070/" },
+  { name: "Payload Manager",  url: "http://localhost:8084/" }
+];
+// ========================================
+
+// Endereço do PS5 App (ps5_app.py) que faz a busca de verdade na rede
+const SCANNER = "http://localhost:8090";
+
+const $ = id => document.getElementById(id);
+let current = 0;
+
+function store(k, v){
+  try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch(e){ return null; }
+}
+function urlFor(h){ return h.url.replace("{ip}", $("ip").value.trim()); }
+
+function drawCards(){
+  $("cards").innerHTML = HOSTS.map((h,i) =>
+    `<button class="card ${i===current?"active":""}" data-i="${i}">
+       <b>${h.name}</b>
+       <span class="st"><span class="dot" id="dot${i}"></span><span id="txt${i}">Verificando…</span></span>
+     </button>`).join("");
+  document.querySelectorAll(".card").forEach(c => c.onclick = () => select(+c.dataset.i));
+}
+
+function select(i){
+  current = i;
+  document.querySelectorAll(".card").forEach((c,k) => c.classList.toggle("active", k===i));
+  $("frame").src = urlFor(HOSTS[i]);
+  store("ps5hub.tab", String(i));
+}
+
+async function check(i){
+  const dot = $("dot"+i), txt = $("txt"+i);
+  dot.className = "dot"; txt.textContent = "Verificando…";
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 2500);
+  try {
+    await fetch(urlFor(HOSTS[i]), { mode:"no-cors", cache:"no-store", signal:ctl.signal });
+    dot.className = "dot ok"; txt.textContent = "Online";
+  } catch(e){
+    dot.className = "dot bad"; txt.textContent = "Offline";
+  }
+  clearTimeout(t);
+}
+
+function checkAll(){ HOSTS.forEach((_,i) => check(i)); }
+
+async function scanPS5(){
+  const msg = $("scanmsg"), btn = $("scan");
+  btn.disabled = true; msg.textContent = "Procurando PS5 na rede…";
+  try {
+    await fetch(SCANNER + "/api/scan", { cache:"no-store" });
+    for (let n = 0; n < 40; n++) {
+      await new Promise(r => setTimeout(r, 800));
+      const s = await (await fetch(SCANNER + "/api/state", { cache:"no-store" })).json();
+      if (!s.scanning) {
+        if (s.ip) {
+          $("ip").value = s.ip; store("ps5hub.ip", s.ip);
+          msg.textContent = "PS5 encontrado: " + s.ip;
+          select(current); checkAll();
+        } else {
+          msg.textContent = "PS5 não encontrado. Confira o Wi‑Fi e se ele está ligado ou em repouso.";
+        }
+        btn.disabled = false; return;
+      }
+    }
+    msg.textContent = "A busca demorou demais. Tente de novo.";
+  } catch(e){
+    msg.textContent = "Não consegui falar com o PS5 App. Abra o ps5_app.py no Termux (ou digite o IP).";
+  }
+  btn.disabled = false;
+}
+$("scan").onclick = scanPS5;
+$("save").onclick = () => { store("ps5hub.ip", $("ip").value.trim()); select(current); checkAll(); };
+$("open").onclick = () => window.open(urlFor(HOSTS[current]), "_blank", "noopener");
+$("refresh").onclick = checkAll;
+
+$("ip").value = store("ps5hub.ip") || "";
+drawCards();
+select(Math.min(+store("ps5hub.tab") || 0, HOSTS.length - 1));
+checkAll();
+</script>
+</body>
+</html>
